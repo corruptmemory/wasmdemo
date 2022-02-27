@@ -29,7 +29,10 @@
 	}
 
 	if (!global.fs && global.require) {
-		global.fs = require("fs");
+		const fs = require("fs");
+		if (typeof fs === "object" && fs !== null && Object.keys(fs).length !== 0) {
+			global.fs = fs;
+		}
 	}
 
 	const enosys = () => {
@@ -100,13 +103,16 @@
 		}
 	}
 
-	if (!global.crypto) {
+	if (!global.crypto && global.require) {
 		const nodeCrypto = require("crypto");
 		global.crypto = {
 			getRandomValues(b) {
 				nodeCrypto.randomFillSync(b);
 			},
 		};
+	}
+	if (!global.crypto) {
+		throw new Error("global.crypto is not available, polyfill required (getRandomValues only)");
 	}
 
 	if (!global.performance) {
@@ -118,12 +124,18 @@
 		};
 	}
 
-	if (!global.TextEncoder) {
+	if (!global.TextEncoder && global.require) {
 		global.TextEncoder = require("util").TextEncoder;
 	}
+	if (!global.TextEncoder) {
+		throw new Error("global.TextEncoder is not available, polyfill required");
+	}
 
-	if (!global.TextDecoder) {
+	if (!global.TextDecoder && global.require) {
 		global.TextDecoder = require("util").TextDecoder;
+	}
+	if (!global.TextDecoder) {
+		throw new Error("global.TextDecoder is not available, polyfill required");
 	}
 
 	// End of polyfills for common API.
@@ -306,6 +318,17 @@
 						setTimeout(this._inst.exports.go_scheduler, timeout);
 					},
 
+					// func Exit(code int)
+					"syscall.Exit": (code) => {
+						if (global.process) {
+							// Node.js
+							process.exit(code);
+						} else {
+							// Can't exit in a browser.
+							throw 'trying to exit with code ' + code;
+						}
+					},
+
 					// func finalizeRef(v ref)
 					"syscall/js.finalizeRef": (v_addr) => {
 						// Note: TinyGo does not support finalizers so this is only called
@@ -319,6 +342,7 @@
 							this._idPool.push(id);
 						}
 					},
+
 					// func stringVal(value string) ref
 					"syscall/js.stringVal": (ret_ptr, value_ptr, value_len) => {
 						const s = loadString(value_ptr, value_len);
@@ -395,7 +419,7 @@
 							mem().setUint8(ret_addr + 8, 1);
 						} catch (err) {
 							storeValue(ret_addr, err);
-							mem().setUint8(ret_addr+ 8, 0);
+							mem().setUint8(ret_addr + 8, 0);
 						}
 					},
 
@@ -463,6 +487,9 @@
 		}
 
 		async run(instance) {
+			if (!(instance instanceof WebAssembly.Instance)) {
+				throw new Error("Go.run: WebAssembly.Instance expected");
+			}
 			this._inst = instance;
 			this._values = [ // JS values that Go currently has references to, indexed by reference id
 				NaN,
@@ -509,7 +536,7 @@
 
 		_makeFuncWrapper(id) {
 			const go = this;
-			return function () {
+			return function() {
 				const event = { id: id, this: this, args: arguments };
 				go._pendingEvent = event;
 				go._resume();

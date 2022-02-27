@@ -33,6 +33,7 @@ function check_available() {
 }
 
 check_available 'go'
+check_available 'which'
 
 cwd="$(echo "$(pwd)")"
 function cleanup() {
@@ -43,22 +44,25 @@ trap cleanup EXIT
 
 function usage() {
   echo "Usage: build.sh [-h|--help] [-c|--clean] [-C|--clean-all]"
-  echo "                [-t|--tiny-go] [-b|--build] [-o|--optimize]"
+  echo "                [-g|--use-go] [-b|--build] [-o|--optimize]"
+  echo "                [-w|--path-to-wasm-opt]"
   echo
   echo '    Build wasmdemo.'
   echo
   echo "Arguments:"
-  echo "  -h|--help               This help text"
-  echo '  -c|--clean              Clean generated artifacts.'
-  echo "  -C|--clean-all          Clean all the artifacts and the Go module cache."
-  echo "  -t|--tiny-go            Build using tiny go"
-  echo "  -o|--optimize           Run 'wasm-opt' to size optimize the build"
+  echo "  -h|--help                     This help text"
+  echo '  -c|--clean                    Clean generated artifacts.'
+  echo "  -C|--clean-all                Clean all the artifacts and the Go module cache."
+  echo "  -g|--use-go                   Build using regular go"
+  echo "  -o|--optimize                 Run 'wasm-opt' to size optimize the build"
+  echo "  -w|--path-to-wasm-opt <path>  Path to the 'wasm-opt' program"
 }
 
 clean=0
 clean_all=0
-tiny_go=0
+tiny_go=true
 optimize=0
+path_to_wasm_opt=""
 
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -80,8 +84,13 @@ while [[ $# -gt 0 ]]; do
     optimize=true
     shift
     ;;
-  -t | --tiny-go)
-    tiny_go=true
+  -g | --use-go)
+    tiny_go=0
+    shift
+    ;;
+  -w | --path-to-wasm-opt)
+    path_to_wasm_opt="$2"
+    shift
     shift
     ;;
   *)
@@ -94,13 +103,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 function go_cmd () {
-  eval "CGO_ENABLED=0 GOOS=js GOARCH=wasm go build -v -o web/assets/wasm.wasm ./wasm"
+  eval "CGO_ENABLED=0 GOOS=js GOARCH=wasm go build -v -o web/wasm/wasm.wasm ./wasm"
 }
 
 function tiny_go_cmd () {
-  eval "CGO_ENABLED=0 GOOS=js GOARCH=wasm tinygo build -size full -o web/assets/wasm.wasm -target wasm ./wasm"
+  eval "CGO_ENABLED=0 GOOS=js GOARCH=wasm tinygo build -size full -o web/wasm/wasm.wasm -target wasm ./wasm"
 }
-
 
 go_used="Building with: $(which go)"
 build_cmd="go_cmd"
@@ -124,7 +132,7 @@ fi
 
 if [ "$clean" = true ]; then
   echo "Regular cleaning..."
-	rm -fr ./web/assets/*.wasm
+	rm -fr ./web/wasm/*.wasm
 	rm -f server
   if [ "$tiny_go" = true ]; then
     CGO_ENABLED=0 GOOS=js GOARCH=wasm tinygo clean
@@ -144,9 +152,16 @@ $build_cmd
 
 if [ "$optimize" = true ]; then
   echo "Optimizing..."
-  rm -f ./web/assets/wasm-bak.wasm
-	cp ./web/assets/wasm.wasm ./web/assets/wasm-bak.wasm
-  ./wasm-opt web/assets/wasm-bak.wasm -o web/assets/wasm.wasm -Oz --strip-dwarf --strip-producers --zero-filled-memory
+  if [ -z "$path_to_wasm_opt" ]; then
+    path_to_wasm_opt="$(which wasm-opt)"
+  fi
+  if [ -z "$path_to_wasm_opt" ]; then
+    echo "Could not find the 'wasm-opt' program.  Please supply with the '-w' command"
+    exit 2
+  fi
+  rm -f ./web/wasm/wasm-bak.wasm
+	cp ./web/wasm/wasm.wasm ./web/wasm/wasm-bak.wasm
+  "$path_to_wasm_opt" web/wasm/wasm-bak.wasm -o web/wasm/wasm.wasm -Oz --strip-dwarf --strip-producers --zero-filled-memory
 fi
 
 echo "Done"

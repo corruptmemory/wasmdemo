@@ -4,19 +4,59 @@ import (
 	"syscall/js"
 
 	"github.com/Nerzal/tinydom"
-	"github.com/Nerzal/tinydom/elements/form"
-	"github.com/Nerzal/tinydom/elements/input"
 )
+
+type item struct {
+	name  string
+	email string
+}
+
+var defaultItems = []item{
+	{"Jim", "jim@example.com"},
+	{"Therese", "therese@example.com"},
+	{"Jimmy", "jimmy@example.com"},
+	{"Matthew", "matthew@example.com"},
+	{"Brendan", "brendan@example.com"},
+	{"Fiona", "fiona@example.com"},
+}
+
+type listView struct {
+	list         *tinydom.Element
+	detail       *tinydom.Element
+	listFuncs    []js.Func
+	listElements []*tinydom.Element
+}
+
+func (l *listView) clear() {
+	l.list = nil
+	l.detail = nil
+	for i := 0; i < len(l.listFuncs); i++ {
+		l.listFuncs[i].Release()
+	}
+	l.listFuncs = nil
+	l.listElements = nil
+}
 
 type App struct {
 	document *tinydom.Document
 	window   *tinydom.Window
 	history  *tinydom.History
 	json     js.Value
+	body     *tinydom.Element
+	items    []item
+	listView listView
 }
 
 func (a *App) stringify(in js.Value) string {
 	return a.json.Call("stringify", in).String()
+}
+
+func (a *App) element(tag, id string) *tinydom.Element {
+	e := a.document.CreateElement(tag)
+	if id != "" {
+		e.SetId(id)
+	}
+	return e
 }
 
 func (a *App) addLink(e *tinydom.Element, text, url string) *tinydom.Element {
@@ -53,6 +93,64 @@ func (a *App) getElementsByTag(tag string) []*tinydom.Element {
 	return nil
 }
 
+func (a *App) clear() {
+	a.body.RemoveAllChildNodes()
+}
+
+func (a *App) itemListElement(i *item) *tinydom.Element {
+	e := a.element("div", "")
+	e.SetClass("list-item")
+	e.SetInnerHTML(i.name)
+	return e
+}
+
+func (a *App) updateDetail(i *item) {
+	lv := &a.listView
+	lv.detail.RemoveAllChildNodes()
+	lv.detail.AppendChild(a.element("div", "name").
+		SetInnerHTML(i.name))
+	lv.detail.AppendChild(a.element("div", "email").
+		SetInnerHTML(i.email))
+}
+
+func (a *App) setSelected(idx int) {
+	lv := &a.listView
+	for i := 0; i < len(lv.listElements); i++ {
+		e := lv.listElements[i]
+		if i == idx {
+			e.SetClass("list-item", "selected")
+			continue
+		}
+		e.SetClass("list-item")
+	}
+}
+
+func (a *App) drawList() {
+	a.clear()
+	lv := &a.listView
+	lv.clear()
+	container := a.element("div", "container").SetClass("grid-container")
+	a.body.AppendChild(container)
+	lv.list = a.element("div", "list")
+	container.AppendChild(lv.list)
+	lv.detail = a.element("div", "detail")
+	container.AppendChild(lv.detail)
+	for i := 0; i < len(a.items); i++ {
+		itm := &a.items[i]
+		ile := a.itemListElement(itm)
+		lv.listElements = append(lv.listElements, ile)
+		clickFunc := js.FuncOf(func(idx int) func(this js.Value, args []js.Value) interface{} {
+			return func(this js.Value, args []js.Value) interface{} {
+				a.setSelected(idx)
+				a.updateDetail(itm)
+				return nil
+			}
+		}(i))
+		ile.AddEventListener("click", clickFunc)
+		lv.list.AppendChild(ile)
+	}
+}
+
 func main() {
 	document := tinydom.GetDocument()
 	window := tinydom.GetWindow()
@@ -62,52 +160,10 @@ func main() {
 		window:   window,
 		history:  history,
 		json:     window.Get("JSON"),
+		body:     document.GetElementById("body-component"),
+		items:    defaultItems,
 	}
-	println(window.Location().Href())
-
-	body := document.GetElementById("body-component")
-	app.addH1(body, "Welcome to tinydom - Hello TinyWorld <3")
-	app.addH1(body, "Yes! I do compile with TinyGo!")
-	app.addBr(body)
-	app.addBr(body)
-	app.addLink(body, "Link 1", "address1")
-	app.addBr(body)
-	app.addLink(body, "Link 2", "address2")
-	app.addBr(body)
-	myForm := form.New()
-	label := document.CreateElement("label")
-	label.SetInnerHTML("Name:")
-	textInput := input.NewTextInput()
-
-	passwordLabel := document.CreateElement("label")
-	passwordLabel.SetInnerHTML("Password:")
-	passwordInput := input.New(input.PasswordInput)
-
-	submitInput := input.New(input.SubmitInput)
-
-	err := myForm.Append(label, textInput.Element, passwordLabel, passwordInput.Element, submitInput.Element)
-	if err != nil {
-		println(err.Error())
-	}
-
-	body.AppendChild(myForm.Element)
-	anchors := app.getElementsByTag("a")
-	for i, a := range anchors {
-		ok, href := a.GetAttribute("href")
-		println("anchor[", i, "]: ", ok, " - ", href)
-	}
-	for _, a := range anchors {
-		a.AddEventListener("click", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-			element := tinydom.Element{Value: this}
-			ok, href := element.GetAttribute("href")
-			println("clicked: ", ok, " - ", href)
-			event := tinydom.Event{Value: args[0]}
-			window.PushState(nil, "", href)
-			event.PreventDefault()
-			event.StopPropagation()
-			return nil
-		}))
-	}
+	app.drawList()
 
 	wait := make(chan struct{}, 0)
 	<-wait
